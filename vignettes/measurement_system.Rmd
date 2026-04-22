@@ -1,0 +1,179 @@
+---
+title: "Measurement System: Two-Factor CFA"
+author: "Greg Veramendi"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Measurement System: Two-Factor CFA}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+## Overview
+
+This vignette shows how to specify and estimate a two-factor measurement system
+with **factorana**. The latent factors are identified from a set of noisy
+indicators (measurements) whose loadings the package estimates jointly with
+the factor variances.
+
+The example below uses two latent factors ("cognitive" and "non-cognitive"
+skills) each measured by three continuous indicators, and is small enough
+(n = 300) to run quickly.
+
+## Simulate data
+
+```{r}
+library(factorana)
+
+set.seed(1)
+n <- 300
+
+# Latent factors (true values, unobserved in practice)
+f_cog    <- rnorm(n, mean = 0, sd = 1.0)
+f_noncog <- rnorm(n, mean = 0, sd = 0.8)
+
+# Cognitive indicators: loadings (1.0, 0.9, 0.7); error sd = 0.5
+cog1 <- 0.0 + 1.0 * f_cog + rnorm(n, 0, 0.5)
+cog2 <- 0.2 + 0.9 * f_cog + rnorm(n, 0, 0.5)
+cog3 <- 0.1 + 0.7 * f_cog + rnorm(n, 0, 0.5)
+
+# Non-cognitive indicators: loadings (1.0, 1.1, 0.8); error sd = 0.5
+nc1 <- 0.0 + 1.0 * f_noncog + rnorm(n, 0, 0.5)
+nc2 <- 0.1 + 1.1 * f_noncog + rnorm(n, 0, 0.5)
+nc3 <- 0.0 + 0.8 * f_noncog + rnorm(n, 0, 0.5)
+
+dat <- data.frame(
+  intercept = 1,
+  cog1 = cog1, cog2 = cog2, cog3 = cog3,
+  nc1  = nc1,  nc2  = nc2,  nc3  = nc3
+)
+head(dat)
+```
+
+## Define the factor model
+
+Two independent latent factors. Loading normalizations are set on the component
+side: each factor has one indicator with loading fixed at 1 (to pin the scale)
+and two free loadings.
+
+```{r}
+fm <- define_factor_model(n_factors = 2, factor_structure = "independent")
+```
+
+## Define model components
+
+For each indicator we declare a linear equation, which factor(s) it loads on,
+and any fixed loadings.  `loading_normalization` takes a vector of length
+`n_factors`:
+
+- `1`  = loading fixed at 1 (scale normalization)
+- `0`  = loading fixed at 0 (indicator is unrelated to that factor)
+- `NA_real_` = free parameter, to be estimated
+
+```{r}
+# Cognitive indicators: load on factor 1 only
+mc_cog1 <- define_model_component(
+  name = "cog1", data = dat, outcome = "cog1", factor = fm,
+  covariates = "intercept", model_type = "linear",
+  loading_normalization = c(1, 0)        # factor 1 loading = 1, factor 2 loading = 0
+)
+mc_cog2 <- define_model_component(
+  name = "cog2", data = dat, outcome = "cog2", factor = fm,
+  covariates = "intercept", model_type = "linear",
+  loading_normalization = c(NA_real_, 0) # factor 1 loading free, factor 2 loading = 0
+)
+mc_cog3 <- define_model_component(
+  name = "cog3", data = dat, outcome = "cog3", factor = fm,
+  covariates = "intercept", model_type = "linear",
+  loading_normalization = c(NA_real_, 0)
+)
+
+# Non-cognitive indicators: load on factor 2 only
+mc_nc1 <- define_model_component(
+  name = "nc1", data = dat, outcome = "nc1", factor = fm,
+  covariates = "intercept", model_type = "linear",
+  loading_normalization = c(0, 1)
+)
+mc_nc2 <- define_model_component(
+  name = "nc2", data = dat, outcome = "nc2", factor = fm,
+  covariates = "intercept", model_type = "linear",
+  loading_normalization = c(0, NA_real_)
+)
+mc_nc3 <- define_model_component(
+  name = "nc3", data = dat, outcome = "nc3", factor = fm,
+  covariates = "intercept", model_type = "linear",
+  loading_normalization = c(0, NA_real_)
+)
+```
+
+Assemble the components into a system:
+
+```{r}
+ms <- define_model_system(
+  components = list(mc_cog1, mc_cog2, mc_cog3, mc_nc1, mc_nc2, mc_nc3),
+  factor = fm
+)
+```
+
+## Estimate
+
+The estimator uses Gauss-Hermite quadrature to integrate over the latent
+factors; we keep `n_quad_points` modest here for speed.
+
+```{r}
+ctrl <- define_estimation_control(n_quad_points = 6, num_cores = 1)
+
+fit <- estimate_model_rcpp(
+  model_system = ms,
+  data         = dat,
+  control      = ctrl,
+  optimizer    = "nlminb",
+  parallel     = FALSE,
+  verbose      = FALSE
+)
+
+fit$convergence  # 0 indicates successful convergence
+```
+
+## Inspect estimates
+
+```{r}
+# Tidy table of parameter estimates with standard errors
+components_table(fit, digits = 3)
+```
+
+Factor variances are near the true values (1.0 for the cognitive factor and
+0.64 = 0.8^2 for the non-cognitive factor); loadings recover the simulated
+values (cog2 ≈ 0.9, cog3 ≈ 0.7, nc2 ≈ 1.1, nc3 ≈ 0.8).
+
+## Factor scores
+
+Posterior mean factor scores for each observation can be recovered from the
+estimated model:
+
+```{r}
+fscores <- estimate_factorscores_rcpp(
+  fit, dat, control = ctrl, parallel = FALSE, verbose = FALSE
+)
+head(fscores[, c("obs_id", "factor_1", "factor_2",
+                 "se_factor_1", "se_factor_2", "converged")])
+
+# Correlation of estimated factor scores with the true (unobserved) factors
+cor(fscores$factor_1, f_cog)
+cor(fscores$factor_2, f_noncog)
+```
+
+## Where to go next
+
+- `vignette("roy_model", package = "factorana")` — an applied example with a
+  discrete sector-choice component and partially observed potential outcomes.
+- `?define_model_component` — supported model types (linear, probit, logit,
+  ordered probit) and options for factor interactions and type intercepts.
+- `?estimate_model_rcpp` — full list of estimator options, including parallel
+  estimation, checkpointing, and adaptive integration for two-stage workflows.

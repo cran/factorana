@@ -1,0 +1,8 @@
+## Makevars for factorana
+
+## Suppress warnings from Eigen headers
+PKG_CPPFLAGS = -DEIGEN_PERMANENTLY_DISABLE_STUPID_WARNINGS
+
+## Standard compilation flags
+PKG_CXXFLAGS = $(SHLIB_OPENMP_CXXFLAGS)
+PKG_LIBS = $(SHLIB_OPENMP_CXXFLAGS)

@@ -1,0 +1,261 @@
+---
+title: "Dynamic Factor Model"
+author: "Greg Veramendi"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Dynamic Factor Model}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment  = "#>"
+)
+```
+
+## Overview
+
+An example of how to estimate the dynamics of a latent factor. Assume
+that indicators are observed at two time points and you want to
+estimate how the period-2 value depends on the period-1 value. You
+need two things:
+
+1. **A measurement system** that is *invariant* across time (same
+   loadings, thresholds / residual SDs across the two periods) so the
+   factor scale is comparable, and
+2. **A structural equation** linking the period-2 factor to the
+   period-1 factor: `f₂ = α + β·f₁ + ε`.
+
+**factorana** supports this with a two-stage workflow, and two
+helper functions make the setup a few lines:
+
+- **`define_dynamic_measurement()`** builds the Stage 1 measurement
+  model: a 2-factor independent system (or k-factor, for k periods)
+  with loadings and residual sigmas tied across periods via
+  equality constraints, but measurement intercepts left
+  period-specific.
+- **`build_dynamic_previous_stage()`** converts the Stage 1
+  estimation result into a `previous_stage` object for Stage 2,
+  carrying the anchor period's intercepts into every factor slot.
+  This anchors the measurement level under `E[f₁] = 0` and lets the
+  observed mean shift between periods identify the structural
+  intercept α.
+
+This vignette walks through a simulated example where `α`, `β`, and
+`σ²_ε` are known, shows the recovery, and explains one subtlety of
+the workflow (why the anchor-period intercepts are the right ones to
+carry into Stage 2).
+
+## Simulate data
+
+One latent construct, three linear indicators per period, two periods.
+The DGP:
+
+$$
+f_1 \sim N(0,\sigma^2_{f_1}), \qquad
+f_2 = \alpha + \beta\,f_1 + \varepsilon, \quad \varepsilon \sim N(0,\sigma^2_\varepsilon)
+$$
+
+$$
+Y_{t,m} = \tau_m + \lambda_m\,f_t + u_{t,m}, \quad u_{t,m} \sim N(0,\sigma_m^2)
+$$
+
+with measurement parameters `τ_m`, `λ_m`, `σ_m` shared across the two
+periods.
+
+```{r}
+library(factorana)
+
+set.seed(41)
+n <- 1500
+
+# Structural parameters (what we want to recover)
+true_var_f1   <- 1.0
+true_alpha    <- 0.4
+true_beta     <- 0.6
+true_sigma_e2 <- 0.5
+
+# Shared measurement parameters
+item_int   <- c(1.5, 1.0, 0.8)
+item_load  <- c(1.0, 0.9, 1.1)   # first loading fixed to 1 in the model
+item_sigma <- c(0.7, 0.75, 0.65)
+
+f1  <- rnorm(n, 0, sqrt(true_var_f1))
+eps <- rnorm(n, 0, sqrt(true_sigma_e2))
+f2  <- true_alpha + true_beta * f1 + eps
+
+gen_Y <- function(f, i) {
+  item_int[i] + item_load[i] * f + rnorm(length(f), 0, item_sigma[i])
+}
+
+dat <- data.frame(
+  intercept = 1,
+  eval      = 1L,
+  Y_t1_m1 = gen_Y(f1, 1), Y_t1_m2 = gen_Y(f1, 2), Y_t1_m3 = gen_Y(f1, 3),
+  Y_t2_m1 = gen_Y(f2, 1), Y_t2_m2 = gen_Y(f2, 2), Y_t2_m3 = gen_Y(f2, 3)
+)
+```
+
+The wide-format data has columns named `<prefix><item>`: `Y_t1_m1`,
+`Y_t1_m2`, `Y_t1_m3` for wave 1, and `Y_t2_m1`, ... for wave 2.
+
+## Stage 1: `define_dynamic_measurement()`
+
+One function call builds the measurement model: a 2-factor
+independent system (one factor per period) with loadings and sigmas
+tied across periods, intercepts left free per period.
+
+```{r}
+dyn <- define_dynamic_measurement(
+  data                 = dat,
+  items                = c("m1", "m2", "m3"),
+  period_prefixes      = c("Y_t1_", "Y_t2_"),
+  model_type           = "linear",
+  evaluation_indicator = "eval"
+)
+# The wrapper generates 5 equality constraints: 2 for loadings (items
+# m2, m3; item m1's loading is fixed to 1 on its factor slot) and 3
+# for sigmas.
+length(dyn$equality_constraints)
+```
+
+Estimate Stage 1 with `estimate_model_rcpp()` exactly as for any
+model system:
+
+```{r}
+ctrl <- define_estimation_control(n_quad_points = 8, num_cores = 1)
+result_stage1 <- estimate_model_rcpp(
+  model_system = dyn$model_system,
+  data         = dat,
+  control      = ctrl,
+  optimizer    = "nlminb",
+  parallel     = FALSE,
+  verbose      = FALSE
+)
+result_stage1$convergence
+```
+
+Inspect the intercepts: the wave-1 intercepts should match the DGP
+`τ_m` (because `E[f₁] = 0` by convention). The wave-2 intercepts
+are shifted by `λ_m · E[f₂]`, which is the mean-drift artefact we
+are about to discard.
+
+```{r}
+est <- result_stage1$estimates
+tab <- data.frame(
+  m        = 1:3,
+  DGP_tau  = item_int,
+  wave_1   = round(c(est["Y_t1_m1_intercept"],
+                     est["Y_t1_m2_intercept"],
+                     est["Y_t1_m3_intercept"]), 3),
+  wave_2   = round(c(est["Y_t2_m1_intercept"],
+                     est["Y_t2_m2_intercept"],
+                     est["Y_t2_m3_intercept"]), 3)
+)
+knitr::kable(tab, row.names = FALSE)
+```
+
+## Why we do not pool the intercepts
+
+A natural alternative is to stack period-1 and period-2 rows into one
+long-format dataset and fit a single-factor CFA. The resulting
+intercepts would be the *pooled* means of `Y` across both periods,
+biased by `λ_m · E[f₂]/2` (because the pooled mean averages the
+period-1 and period-2 factor means). Plugging those into Stage 2
+under-estimates `α` by roughly `E[f₂]/2`.
+
+The wrapper avoids that: Stage 1 estimates period-specific intercepts,
+then `build_dynamic_previous_stage()` carries only the anchor
+period's intercepts into Stage 2.
+
+## Stage 2: `build_dynamic_previous_stage()` + `SE_linear`
+
+```{r}
+dummy <- build_dynamic_previous_stage(
+  dyn           = dyn,
+  stage1_result = result_stage1,
+  data          = dat,
+  anchor_period = 1L
+)
+
+fm_stage2 <- define_factor_model(
+  n_factors        = 2,
+  n_types          = 1,
+  factor_structure = "SE_linear"
+)
+ms_stage2 <- define_model_system(
+  components     = list(),       # measurement components prepended from previous_stage
+  factor         = fm_stage2,
+  previous_stage = dummy
+)
+
+init_s2 <- initialize_parameters(ms_stage2, dat, verbose = FALSE)
+init_s2$init_params["factor_var_1"]    <- unname(dummy$estimates["factor_var_1"])
+init_s2$init_params["se_intercept"]    <- 0.0
+init_s2$init_params["se_linear_1"]     <- 0.5
+init_s2$init_params["se_residual_var"] <- 0.5
+
+result_stage2 <- estimate_model_rcpp(
+  model_system = ms_stage2,
+  data         = dat,
+  init_params  = init_s2$init_params,
+  control      = ctrl,
+  optimizer    = "nlminb",
+  parallel     = FALSE,
+  verbose      = FALSE
+)
+result_stage2$convergence
+```
+
+## Recovery
+
+```{r}
+est <- result_stage2$estimates
+se  <- result_stage2$std_errors
+ps  <- c("factor_var_1", "se_intercept", "se_linear_1", "se_residual_var")
+
+tab <- data.frame(
+  param = ps,
+  true  = c(true_var_f1, true_alpha, true_beta, true_sigma_e2),
+  est   = round(unname(est[ps]), 4),
+  se    = round(unname(se[ps]),  4)
+)
+tab$z <- round((tab$est - tab$true) / tab$se, 2)
+knitr::kable(tab, row.names = FALSE)
+```
+
+`se_intercept` (the structural α) recovers essentially exactly, which
+is the whole point of the workflow. The slope β, residual variance
+σ²_ε, and input factor variance σ²_f₁ also recover within their
+standard errors.
+
+## Notes on generalisation
+
+- **More than two periods.** `period_prefixes` can have length
+  3, 4, or more. The wrapper builds a k-factor independent Stage 1
+  with all `k · (n_items - 1)` loadings and `k · n_items` sigmas tied
+  across periods. For Stage 2 SE modelling, pick any two factors
+  (e.g., periods *t-1* and *t*) and build a 2-factor SE model with
+  `previous_stage`.
+- **Ordered probit measures.** Pass `model_type = "oprobit"` and
+  `n_categories = K`. The wrapper ties the `K-1` cutpoints of each
+  item across periods (in place of sigma).
+- **Additional covariates.** Pass `covariates = c("intercept", "x1", ...)`.
+  Covariate coefficients on items are estimated per-period in Stage 1
+  (not tied by this wrapper); the anchor-period values are carried
+  into Stage 2.
+
+## Where to go next
+
+- `?define_factor_model`: `factor_structure = "SE_quadratic"` adds a
+  quadratic term `γ·f_1²` to the structural equation (trap/threshold
+  dynamics).
+- `?define_model_system`: the underlying `equality_constraints`
+  argument, used by the wrapper.
+- `vignette("measurement_system", package = "factorana")`: basics
+  of measurement-system estimation.
+- `vignette("roy_model", package = "factorana")`: a different
+  structural setting (discrete sector choice plus continuous outcomes
+  sharing a latent ability).

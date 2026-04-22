@@ -1,0 +1,675 @@
+<!DOCTYPE html>
+
+<html>
+
+<head>
+
+<meta charset="utf-8" />
+<meta name="generator" content="pandoc" />
+<meta http-equiv="X-UA-Compatible" content="IE=EDGE" />
+
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+
+<meta name="author" content="Greg Veramendi" />
+
+
+<title>Dynamic Factor Model</title>
+
+<script>// Pandoc 2.9 adds attributes on both header and div. We remove the former (to
+// be compatible with the behavior of Pandoc < 2.8).
+document.addEventListener('DOMContentLoaded', function(e) {
+  var hs = document.querySelectorAll("div.section[class*='level'] > :first-child");
+  var i, h, a;
+  for (i = 0; i < hs.length; i++) {
+    h = hs[i];
+    if (!/^h[1-6]$/i.test(h.tagName)) continue;  // it should be a header h1-h6
+    a = h.attributes;
+    while (a.length > 0) h.removeAttribute(a[0].name);
+  }
+});
+</script>
+
+<style type="text/css">
+code{white-space: pre-wrap;}
+span.smallcaps{font-variant: small-caps;}
+span.underline{text-decoration: underline;}
+div.column{display: inline-block; vertical-align: top; width: 50%;}
+div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+ul.task-list{list-style: none;}
+</style>
+
+
+
+<style type="text/css">
+code {
+white-space: pre;
+}
+.sourceCode {
+overflow: visible;
+}
+</style>
+<style type="text/css" data-origin="pandoc">
+html { -webkit-text-size-adjust: 100%; }
+pre > code.sourceCode { white-space: pre; position: relative; }
+pre > code.sourceCode > span { display: inline-block; line-height: 1.25; }
+pre > code.sourceCode > span:empty { height: 1.2em; }
+.sourceCode { overflow: visible; }
+code.sourceCode > span { color: inherit; text-decoration: inherit; }
+div.sourceCode { margin: 1em 0; }
+pre.sourceCode { margin: 0; }
+@media screen {
+div.sourceCode { overflow: auto; }
+}
+@media print {
+pre > code.sourceCode { white-space: pre-wrap; }
+pre > code.sourceCode > span { text-indent: -5em; padding-left: 5em; }
+}
+pre.numberSource code
+{ counter-reset: source-line 0; }
+pre.numberSource code > span
+{ position: relative; left: -4em; counter-increment: source-line; }
+pre.numberSource code > span > a:first-child::before
+{ content: counter(source-line);
+position: relative; left: -1em; text-align: right; vertical-align: baseline;
+border: none; display: inline-block;
+-webkit-touch-callout: none; -webkit-user-select: none;
+-khtml-user-select: none; -moz-user-select: none;
+-ms-user-select: none; user-select: none;
+padding: 0 4px; width: 4em;
+color: #aaaaaa;
+}
+pre.numberSource { margin-left: 3em; border-left: 1px solid #aaaaaa; padding-left: 4px; }
+div.sourceCode
+{ }
+@media screen {
+pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+}
+code span.al { color: #ff0000; font-weight: bold; } 
+code span.an { color: #60a0b0; font-weight: bold; font-style: italic; } 
+code span.at { color: #7d9029; } 
+code span.bn { color: #40a070; } 
+code span.bu { color: #008000; } 
+code span.cf { color: #007020; font-weight: bold; } 
+code span.ch { color: #4070a0; } 
+code span.cn { color: #880000; } 
+code span.co { color: #60a0b0; font-style: italic; } 
+code span.cv { color: #60a0b0; font-weight: bold; font-style: italic; } 
+code span.do { color: #ba2121; font-style: italic; } 
+code span.dt { color: #902000; } 
+code span.dv { color: #40a070; } 
+code span.er { color: #ff0000; font-weight: bold; } 
+code span.ex { } 
+code span.fl { color: #40a070; } 
+code span.fu { color: #06287e; } 
+code span.im { color: #008000; font-weight: bold; } 
+code span.in { color: #60a0b0; font-weight: bold; font-style: italic; } 
+code span.kw { color: #007020; font-weight: bold; } 
+code span.op { color: #666666; } 
+code span.ot { color: #007020; } 
+code span.pp { color: #bc7a00; } 
+code span.sc { color: #4070a0; } 
+code span.ss { color: #bb6688; } 
+code span.st { color: #4070a0; } 
+code span.va { color: #19177c; } 
+code span.vs { color: #4070a0; } 
+code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } 
+</style>
+<script>
+// apply pandoc div.sourceCode style to pre.sourceCode instead
+(function() {
+  var sheets = document.styleSheets;
+  for (var i = 0; i < sheets.length; i++) {
+    if (sheets[i].ownerNode.dataset["origin"] !== "pandoc") continue;
+    try { var rules = sheets[i].cssRules; } catch (e) { continue; }
+    var j = 0;
+    while (j < rules.length) {
+      var rule = rules[j];
+      // check if there is a div.sourceCode rule
+      if (rule.type !== rule.STYLE_RULE || rule.selectorText !== "div.sourceCode") {
+        j++;
+        continue;
+      }
+      var style = rule.style.cssText;
+      // check if color or background-color is set
+      if (rule.style.color === '' && rule.style.backgroundColor === '') {
+        j++;
+        continue;
+      }
+      // replace div.sourceCode by a pre.sourceCode rule
+      sheets[i].deleteRule(j);
+      sheets[i].insertRule('pre.sourceCode{' + style + '}', j);
+    }
+  }
+})();
+</script>
+
+
+
+
+<style type="text/css">body {
+background-color: #fff;
+margin: 1em auto;
+max-width: 700px;
+overflow: visible;
+padding-left: 2em;
+padding-right: 2em;
+font-family: "Open Sans", "Helvetica Neue", Helvetica, Arial, sans-serif;
+font-size: 14px;
+line-height: 1.35;
+}
+#TOC {
+clear: both;
+margin: 0 0 10px 10px;
+padding: 4px;
+width: 400px;
+border: 1px solid #CCCCCC;
+border-radius: 5px;
+background-color: #f6f6f6;
+font-size: 13px;
+line-height: 1.3;
+}
+#TOC .toctitle {
+font-weight: bold;
+font-size: 15px;
+margin-left: 5px;
+}
+#TOC ul {
+padding-left: 40px;
+margin-left: -1.5em;
+margin-top: 5px;
+margin-bottom: 5px;
+}
+#TOC ul ul {
+margin-left: -2em;
+}
+#TOC li {
+line-height: 16px;
+}
+table {
+margin: 1em auto;
+border-width: 1px;
+border-color: #DDDDDD;
+border-style: outset;
+border-collapse: collapse;
+}
+table th {
+border-width: 2px;
+padding: 5px;
+border-style: inset;
+}
+table td {
+border-width: 1px;
+border-style: inset;
+line-height: 18px;
+padding: 5px 5px;
+}
+table, table th, table td {
+border-left-style: none;
+border-right-style: none;
+}
+table thead, table tr.even {
+background-color: #f7f7f7;
+}
+p {
+margin: 0.5em 0;
+}
+blockquote {
+background-color: #f6f6f6;
+padding: 0.25em 0.75em;
+}
+hr {
+border-style: solid;
+border: none;
+border-top: 1px solid #777;
+margin: 28px 0;
+}
+dl {
+margin-left: 0;
+}
+dl dd {
+margin-bottom: 13px;
+margin-left: 13px;
+}
+dl dt {
+font-weight: bold;
+}
+ul {
+margin-top: 0;
+}
+ul li {
+list-style: circle outside;
+}
+ul ul {
+margin-bottom: 0;
+}
+pre, code {
+background-color: #f7f7f7;
+border-radius: 3px;
+color: #333;
+white-space: pre-wrap; 
+}
+pre {
+border-radius: 3px;
+margin: 5px 0px 10px 0px;
+padding: 10px;
+}
+pre:not([class]) {
+background-color: #f7f7f7;
+}
+code {
+font-family: Consolas, Monaco, 'Courier New', monospace;
+font-size: 85%;
+}
+p > code, li > code {
+padding: 2px 0px;
+}
+div.figure {
+text-align: center;
+}
+img {
+background-color: #FFFFFF;
+padding: 2px;
+border: 1px solid #DDDDDD;
+border-radius: 3px;
+border: 1px solid #CCCCCC;
+margin: 0 5px;
+}
+h1 {
+margin-top: 0;
+font-size: 35px;
+line-height: 40px;
+}
+h2 {
+border-bottom: 4px solid #f7f7f7;
+padding-top: 10px;
+padding-bottom: 2px;
+font-size: 145%;
+}
+h3 {
+border-bottom: 2px solid #f7f7f7;
+padding-top: 10px;
+font-size: 120%;
+}
+h4 {
+border-bottom: 1px solid #f7f7f7;
+margin-left: 8px;
+font-size: 105%;
+}
+h5, h6 {
+border-bottom: 1px solid #ccc;
+font-size: 105%;
+}
+a {
+color: #0033dd;
+text-decoration: none;
+}
+a:hover {
+color: #6666ff; }
+a:visited {
+color: #800080; }
+a:visited:hover {
+color: #BB00BB; }
+a[href^="http:"] {
+text-decoration: underline; }
+a[href^="https:"] {
+text-decoration: underline; }
+
+code > span.kw { color: #555; font-weight: bold; } 
+code > span.dt { color: #902000; } 
+code > span.dv { color: #40a070; } 
+code > span.bn { color: #d14; } 
+code > span.fl { color: #d14; } 
+code > span.ch { color: #d14; } 
+code > span.st { color: #d14; } 
+code > span.co { color: #888888; font-style: italic; } 
+code > span.ot { color: #007020; } 
+code > span.al { color: #ff0000; font-weight: bold; } 
+code > span.fu { color: #900; font-weight: bold; } 
+code > span.er { color: #a61717; background-color: #e3d2d2; } 
+</style>
+
+
+
+
+</head>
+
+<body>
+
+
+
+
+<h1 class="title toc-ignore">Dynamic Factor Model</h1>
+<h4 class="author">Greg Veramendi</h4>
+
+
+
+<div id="overview" class="section level2">
+<h2>Overview</h2>
+<p>An example of how to estimate the dynamics of a latent factor. Assume
+that indicators are observed at two time points and you want to estimate
+how the period-2 value depends on the period-1 value. You need two
+things:</p>
+<ol style="list-style-type: decimal">
+<li><strong>A measurement system</strong> that is <em>invariant</em>
+across time (same loadings, thresholds / residual SDs across the two
+periods) so the factor scale is comparable, and</li>
+<li><strong>A structural equation</strong> linking the period-2 factor
+to the period-1 factor: <code>f₂ = α + β·f₁ + ε</code>.</li>
+</ol>
+<p><strong>factorana</strong> supports this with a two-stage workflow,
+and two helper functions make the setup a few lines:</p>
+<ul>
+<li><strong><code>define_dynamic_measurement()</code></strong> builds
+the Stage 1 measurement model: a 2-factor independent system (or
+k-factor, for k periods) with loadings and residual sigmas tied across
+periods via equality constraints, but measurement intercepts left
+period-specific.</li>
+<li><strong><code>build_dynamic_previous_stage()</code></strong>
+converts the Stage 1 estimation result into a
+<code>previous_stage</code> object for Stage 2, carrying the anchor
+period’s intercepts into every factor slot. This anchors the measurement
+level under <code>E[f₁] = 0</code> and lets the observed mean shift
+between periods identify the structural intercept α.</li>
+</ul>
+<p>This vignette walks through a simulated example where <code>α</code>,
+<code>β</code>, and <code>σ²_ε</code> are known, shows the recovery, and
+explains one subtlety of the workflow (why the anchor-period intercepts
+are the right ones to carry into Stage 2).</p>
+</div>
+<div id="simulate-data" class="section level2">
+<h2>Simulate data</h2>
+<p>One latent construct, three linear indicators per period, two
+periods. The DGP:</p>
+<p><span class="math display">\[
+f_1 \sim N(0,\sigma^2_{f_1}), \qquad
+f_2 = \alpha + \beta\,f_1 + \varepsilon, \quad \varepsilon \sim
+N(0,\sigma^2_\varepsilon)
+\]</span></p>
+<p><span class="math display">\[
+Y_{t,m} = \tau_m + \lambda_m\,f_t + u_{t,m}, \quad u_{t,m} \sim
+N(0,\sigma_m^2)
+\]</span></p>
+<p>with measurement parameters <code>τ_m</code>, <code>λ_m</code>,
+<code>σ_m</code> shared across the two periods.</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb1-1"><a href="#cb1-1" tabindex="-1"></a><span class="fu">library</span>(factorana)</span>
+<span id="cb1-2"><a href="#cb1-2" tabindex="-1"></a></span>
+<span id="cb1-3"><a href="#cb1-3" tabindex="-1"></a><span class="fu">set.seed</span>(<span class="dv">41</span>)</span>
+<span id="cb1-4"><a href="#cb1-4" tabindex="-1"></a>n <span class="ot">&lt;-</span> <span class="dv">1500</span></span>
+<span id="cb1-5"><a href="#cb1-5" tabindex="-1"></a></span>
+<span id="cb1-6"><a href="#cb1-6" tabindex="-1"></a><span class="co"># Structural parameters (what we want to recover)</span></span>
+<span id="cb1-7"><a href="#cb1-7" tabindex="-1"></a>true_var_f1   <span class="ot">&lt;-</span> <span class="fl">1.0</span></span>
+<span id="cb1-8"><a href="#cb1-8" tabindex="-1"></a>true_alpha    <span class="ot">&lt;-</span> <span class="fl">0.4</span></span>
+<span id="cb1-9"><a href="#cb1-9" tabindex="-1"></a>true_beta     <span class="ot">&lt;-</span> <span class="fl">0.6</span></span>
+<span id="cb1-10"><a href="#cb1-10" tabindex="-1"></a>true_sigma_e2 <span class="ot">&lt;-</span> <span class="fl">0.5</span></span>
+<span id="cb1-11"><a href="#cb1-11" tabindex="-1"></a></span>
+<span id="cb1-12"><a href="#cb1-12" tabindex="-1"></a><span class="co"># Shared measurement parameters</span></span>
+<span id="cb1-13"><a href="#cb1-13" tabindex="-1"></a>item_int   <span class="ot">&lt;-</span> <span class="fu">c</span>(<span class="fl">1.5</span>, <span class="fl">1.0</span>, <span class="fl">0.8</span>)</span>
+<span id="cb1-14"><a href="#cb1-14" tabindex="-1"></a>item_load  <span class="ot">&lt;-</span> <span class="fu">c</span>(<span class="fl">1.0</span>, <span class="fl">0.9</span>, <span class="fl">1.1</span>)   <span class="co"># first loading fixed to 1 in the model</span></span>
+<span id="cb1-15"><a href="#cb1-15" tabindex="-1"></a>item_sigma <span class="ot">&lt;-</span> <span class="fu">c</span>(<span class="fl">0.7</span>, <span class="fl">0.75</span>, <span class="fl">0.65</span>)</span>
+<span id="cb1-16"><a href="#cb1-16" tabindex="-1"></a></span>
+<span id="cb1-17"><a href="#cb1-17" tabindex="-1"></a>f1  <span class="ot">&lt;-</span> <span class="fu">rnorm</span>(n, <span class="dv">0</span>, <span class="fu">sqrt</span>(true_var_f1))</span>
+<span id="cb1-18"><a href="#cb1-18" tabindex="-1"></a>eps <span class="ot">&lt;-</span> <span class="fu">rnorm</span>(n, <span class="dv">0</span>, <span class="fu">sqrt</span>(true_sigma_e2))</span>
+<span id="cb1-19"><a href="#cb1-19" tabindex="-1"></a>f2  <span class="ot">&lt;-</span> true_alpha <span class="sc">+</span> true_beta <span class="sc">*</span> f1 <span class="sc">+</span> eps</span>
+<span id="cb1-20"><a href="#cb1-20" tabindex="-1"></a></span>
+<span id="cb1-21"><a href="#cb1-21" tabindex="-1"></a>gen_Y <span class="ot">&lt;-</span> <span class="cf">function</span>(f, i) {</span>
+<span id="cb1-22"><a href="#cb1-22" tabindex="-1"></a>  item_int[i] <span class="sc">+</span> item_load[i] <span class="sc">*</span> f <span class="sc">+</span> <span class="fu">rnorm</span>(<span class="fu">length</span>(f), <span class="dv">0</span>, item_sigma[i])</span>
+<span id="cb1-23"><a href="#cb1-23" tabindex="-1"></a>}</span>
+<span id="cb1-24"><a href="#cb1-24" tabindex="-1"></a></span>
+<span id="cb1-25"><a href="#cb1-25" tabindex="-1"></a>dat <span class="ot">&lt;-</span> <span class="fu">data.frame</span>(</span>
+<span id="cb1-26"><a href="#cb1-26" tabindex="-1"></a>  <span class="at">intercept =</span> <span class="dv">1</span>,</span>
+<span id="cb1-27"><a href="#cb1-27" tabindex="-1"></a>  <span class="at">eval      =</span> <span class="dv">1</span><span class="dt">L</span>,</span>
+<span id="cb1-28"><a href="#cb1-28" tabindex="-1"></a>  <span class="at">Y_t1_m1 =</span> <span class="fu">gen_Y</span>(f1, <span class="dv">1</span>), <span class="at">Y_t1_m2 =</span> <span class="fu">gen_Y</span>(f1, <span class="dv">2</span>), <span class="at">Y_t1_m3 =</span> <span class="fu">gen_Y</span>(f1, <span class="dv">3</span>),</span>
+<span id="cb1-29"><a href="#cb1-29" tabindex="-1"></a>  <span class="at">Y_t2_m1 =</span> <span class="fu">gen_Y</span>(f2, <span class="dv">1</span>), <span class="at">Y_t2_m2 =</span> <span class="fu">gen_Y</span>(f2, <span class="dv">2</span>), <span class="at">Y_t2_m3 =</span> <span class="fu">gen_Y</span>(f2, <span class="dv">3</span>)</span>
+<span id="cb1-30"><a href="#cb1-30" tabindex="-1"></a>)</span></code></pre></div>
+<p>The wide-format data has columns named
+<code>&lt;prefix&gt;&lt;item&gt;</code>: <code>Y_t1_m1</code>,
+<code>Y_t1_m2</code>, <code>Y_t1_m3</code> for wave 1, and
+<code>Y_t2_m1</code>, … for wave 2.</p>
+</div>
+<div id="stage-1-define_dynamic_measurement" class="section level2">
+<h2>Stage 1: <code>define_dynamic_measurement()</code></h2>
+<p>One function call builds the measurement model: a 2-factor
+independent system (one factor per period) with loadings and sigmas tied
+across periods, intercepts left free per period.</p>
+<div class="sourceCode" id="cb2"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb2-1"><a href="#cb2-1" tabindex="-1"></a>dyn <span class="ot">&lt;-</span> <span class="fu">define_dynamic_measurement</span>(</span>
+<span id="cb2-2"><a href="#cb2-2" tabindex="-1"></a>  <span class="at">data                 =</span> dat,</span>
+<span id="cb2-3"><a href="#cb2-3" tabindex="-1"></a>  <span class="at">items                =</span> <span class="fu">c</span>(<span class="st">&quot;m1&quot;</span>, <span class="st">&quot;m2&quot;</span>, <span class="st">&quot;m3&quot;</span>),</span>
+<span id="cb2-4"><a href="#cb2-4" tabindex="-1"></a>  <span class="at">period_prefixes      =</span> <span class="fu">c</span>(<span class="st">&quot;Y_t1_&quot;</span>, <span class="st">&quot;Y_t2_&quot;</span>),</span>
+<span id="cb2-5"><a href="#cb2-5" tabindex="-1"></a>  <span class="at">model_type           =</span> <span class="st">&quot;linear&quot;</span>,</span>
+<span id="cb2-6"><a href="#cb2-6" tabindex="-1"></a>  <span class="at">evaluation_indicator =</span> <span class="st">&quot;eval&quot;</span></span>
+<span id="cb2-7"><a href="#cb2-7" tabindex="-1"></a>)</span>
+<span id="cb2-8"><a href="#cb2-8" tabindex="-1"></a><span class="co"># The wrapper generates 5 equality constraints: 2 for loadings (items</span></span>
+<span id="cb2-9"><a href="#cb2-9" tabindex="-1"></a><span class="co"># m2, m3; item m1&#39;s loading is fixed to 1 on its factor slot) and 3</span></span>
+<span id="cb2-10"><a href="#cb2-10" tabindex="-1"></a><span class="co"># for sigmas.</span></span>
+<span id="cb2-11"><a href="#cb2-11" tabindex="-1"></a><span class="fu">length</span>(dyn<span class="sc">$</span>equality_constraints)</span>
+<span id="cb2-12"><a href="#cb2-12" tabindex="-1"></a><span class="co">#&gt; [1] 5</span></span></code></pre></div>
+<p>Estimate Stage 1 with <code>estimate_model_rcpp()</code> exactly as
+for any model system:</p>
+<div class="sourceCode" id="cb3"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb3-1"><a href="#cb3-1" tabindex="-1"></a>ctrl <span class="ot">&lt;-</span> <span class="fu">define_estimation_control</span>(<span class="at">n_quad_points =</span> <span class="dv">8</span>, <span class="at">num_cores =</span> <span class="dv">1</span>)</span>
+<span id="cb3-2"><a href="#cb3-2" tabindex="-1"></a>result_stage1 <span class="ot">&lt;-</span> <span class="fu">estimate_model_rcpp</span>(</span>
+<span id="cb3-3"><a href="#cb3-3" tabindex="-1"></a>  <span class="at">model_system =</span> dyn<span class="sc">$</span>model_system,</span>
+<span id="cb3-4"><a href="#cb3-4" tabindex="-1"></a>  <span class="at">data         =</span> dat,</span>
+<span id="cb3-5"><a href="#cb3-5" tabindex="-1"></a>  <span class="at">control      =</span> ctrl,</span>
+<span id="cb3-6"><a href="#cb3-6" tabindex="-1"></a>  <span class="at">optimizer    =</span> <span class="st">&quot;nlminb&quot;</span>,</span>
+<span id="cb3-7"><a href="#cb3-7" tabindex="-1"></a>  <span class="at">parallel     =</span> <span class="cn">FALSE</span>,</span>
+<span id="cb3-8"><a href="#cb3-8" tabindex="-1"></a>  <span class="at">verbose      =</span> <span class="cn">FALSE</span></span>
+<span id="cb3-9"><a href="#cb3-9" tabindex="-1"></a>)</span>
+<span id="cb3-10"><a href="#cb3-10" tabindex="-1"></a>result_stage1<span class="sc">$</span>convergence</span>
+<span id="cb3-11"><a href="#cb3-11" tabindex="-1"></a><span class="co">#&gt; [1] 0</span></span></code></pre></div>
+<p>Inspect the intercepts: the wave-1 intercepts should match the DGP
+<code>τ_m</code> (because <code>E[f₁] = 0</code> by convention). The
+wave-2 intercepts are shifted by <code>λ_m · E[f₂]</code>, which is the
+mean-drift artefact we are about to discard.</p>
+<div class="sourceCode" id="cb4"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb4-1"><a href="#cb4-1" tabindex="-1"></a>est <span class="ot">&lt;-</span> result_stage1<span class="sc">$</span>estimates</span>
+<span id="cb4-2"><a href="#cb4-2" tabindex="-1"></a>tab <span class="ot">&lt;-</span> <span class="fu">data.frame</span>(</span>
+<span id="cb4-3"><a href="#cb4-3" tabindex="-1"></a>  <span class="at">m        =</span> <span class="dv">1</span><span class="sc">:</span><span class="dv">3</span>,</span>
+<span id="cb4-4"><a href="#cb4-4" tabindex="-1"></a>  <span class="at">DGP_tau  =</span> item_int,</span>
+<span id="cb4-5"><a href="#cb4-5" tabindex="-1"></a>  <span class="at">wave_1   =</span> <span class="fu">round</span>(<span class="fu">c</span>(est[<span class="st">&quot;Y_t1_m1_intercept&quot;</span>],</span>
+<span id="cb4-6"><a href="#cb4-6" tabindex="-1"></a>                     est[<span class="st">&quot;Y_t1_m2_intercept&quot;</span>],</span>
+<span id="cb4-7"><a href="#cb4-7" tabindex="-1"></a>                     est[<span class="st">&quot;Y_t1_m3_intercept&quot;</span>]), <span class="dv">3</span>),</span>
+<span id="cb4-8"><a href="#cb4-8" tabindex="-1"></a>  <span class="at">wave_2   =</span> <span class="fu">round</span>(<span class="fu">c</span>(est[<span class="st">&quot;Y_t2_m1_intercept&quot;</span>],</span>
+<span id="cb4-9"><a href="#cb4-9" tabindex="-1"></a>                     est[<span class="st">&quot;Y_t2_m2_intercept&quot;</span>],</span>
+<span id="cb4-10"><a href="#cb4-10" tabindex="-1"></a>                     est[<span class="st">&quot;Y_t2_m3_intercept&quot;</span>]), <span class="dv">3</span>)</span>
+<span id="cb4-11"><a href="#cb4-11" tabindex="-1"></a>)</span>
+<span id="cb4-12"><a href="#cb4-12" tabindex="-1"></a>knitr<span class="sc">::</span><span class="fu">kable</span>(tab, <span class="at">row.names =</span> <span class="cn">FALSE</span>)</span></code></pre></div>
+<table>
+<thead>
+<tr class="header">
+<th align="right">m</th>
+<th align="right">DGP_tau</th>
+<th align="right">wave_1</th>
+<th align="right">wave_2</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td align="right">1</td>
+<td align="right">1.5</td>
+<td align="right">1.488</td>
+<td align="right">1.905</td>
+</tr>
+<tr class="even">
+<td align="right">2</td>
+<td align="right">1.0</td>
+<td align="right">1.000</td>
+<td align="right">1.332</td>
+</tr>
+<tr class="odd">
+<td align="right">3</td>
+<td align="right">0.8</td>
+<td align="right">0.778</td>
+<td align="right">1.234</td>
+</tr>
+</tbody>
+</table>
+</div>
+<div id="why-we-do-not-pool-the-intercepts" class="section level2">
+<h2>Why we do not pool the intercepts</h2>
+<p>A natural alternative is to stack period-1 and period-2 rows into one
+long-format dataset and fit a single-factor CFA. The resulting
+intercepts would be the <em>pooled</em> means of <code>Y</code> across
+both periods, biased by <code>λ_m · E[f₂]/2</code> (because the pooled
+mean averages the period-1 and period-2 factor means). Plugging those
+into Stage 2 under-estimates <code>α</code> by roughly
+<code>E[f₂]/2</code>.</p>
+<p>The wrapper avoids that: Stage 1 estimates period-specific
+intercepts, then <code>build_dynamic_previous_stage()</code> carries
+only the anchor period’s intercepts into Stage 2.</p>
+</div>
+<div id="stage-2-build_dynamic_previous_stage-se_linear" class="section level2">
+<h2>Stage 2: <code>build_dynamic_previous_stage()</code> +
+<code>SE_linear</code></h2>
+<div class="sourceCode" id="cb5"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb5-1"><a href="#cb5-1" tabindex="-1"></a>dummy <span class="ot">&lt;-</span> <span class="fu">build_dynamic_previous_stage</span>(</span>
+<span id="cb5-2"><a href="#cb5-2" tabindex="-1"></a>  <span class="at">dyn           =</span> dyn,</span>
+<span id="cb5-3"><a href="#cb5-3" tabindex="-1"></a>  <span class="at">stage1_result =</span> result_stage1,</span>
+<span id="cb5-4"><a href="#cb5-4" tabindex="-1"></a>  <span class="at">data          =</span> dat,</span>
+<span id="cb5-5"><a href="#cb5-5" tabindex="-1"></a>  <span class="at">anchor_period =</span> <span class="dv">1</span><span class="dt">L</span></span>
+<span id="cb5-6"><a href="#cb5-6" tabindex="-1"></a>)</span>
+<span id="cb5-7"><a href="#cb5-7" tabindex="-1"></a></span>
+<span id="cb5-8"><a href="#cb5-8" tabindex="-1"></a>fm_stage2 <span class="ot">&lt;-</span> <span class="fu">define_factor_model</span>(</span>
+<span id="cb5-9"><a href="#cb5-9" tabindex="-1"></a>  <span class="at">n_factors        =</span> <span class="dv">2</span>,</span>
+<span id="cb5-10"><a href="#cb5-10" tabindex="-1"></a>  <span class="at">n_types          =</span> <span class="dv">1</span>,</span>
+<span id="cb5-11"><a href="#cb5-11" tabindex="-1"></a>  <span class="at">factor_structure =</span> <span class="st">&quot;SE_linear&quot;</span></span>
+<span id="cb5-12"><a href="#cb5-12" tabindex="-1"></a>)</span>
+<span id="cb5-13"><a href="#cb5-13" tabindex="-1"></a>ms_stage2 <span class="ot">&lt;-</span> <span class="fu">define_model_system</span>(</span>
+<span id="cb5-14"><a href="#cb5-14" tabindex="-1"></a>  <span class="at">components     =</span> <span class="fu">list</span>(),       <span class="co"># measurement components prepended from previous_stage</span></span>
+<span id="cb5-15"><a href="#cb5-15" tabindex="-1"></a>  <span class="at">factor         =</span> fm_stage2,</span>
+<span id="cb5-16"><a href="#cb5-16" tabindex="-1"></a>  <span class="at">previous_stage =</span> dummy</span>
+<span id="cb5-17"><a href="#cb5-17" tabindex="-1"></a>)</span>
+<span id="cb5-18"><a href="#cb5-18" tabindex="-1"></a><span class="co">#&gt; Two-stage SE estimation: Stage 1 (independent) -&gt; Stage 2 (SE_linear)</span></span>
+<span id="cb5-19"><a href="#cb5-19" tabindex="-1"></a><span class="co">#&gt;   Measurement parameters (loadings, thresholds) will be fixed from Stage 1</span></span>
+<span id="cb5-20"><a href="#cb5-20" tabindex="-1"></a><span class="co">#&gt;   Factor distribution parameters will use Stage 2 structure</span></span>
+<span id="cb5-21"><a href="#cb5-21" tabindex="-1"></a><span class="co">#&gt;   Fixing 16 measurement parameters, ignoring 2 factor distribution parameters</span></span>
+<span id="cb5-22"><a href="#cb5-22" tabindex="-1"></a></span>
+<span id="cb5-23"><a href="#cb5-23" tabindex="-1"></a>init_s2 <span class="ot">&lt;-</span> <span class="fu">initialize_parameters</span>(ms_stage2, dat, <span class="at">verbose =</span> <span class="cn">FALSE</span>)</span>
+<span id="cb5-24"><a href="#cb5-24" tabindex="-1"></a>init_s2<span class="sc">$</span>init_params[<span class="st">&quot;factor_var_1&quot;</span>]    <span class="ot">&lt;-</span> <span class="fu">unname</span>(dummy<span class="sc">$</span>estimates[<span class="st">&quot;factor_var_1&quot;</span>])</span>
+<span id="cb5-25"><a href="#cb5-25" tabindex="-1"></a>init_s2<span class="sc">$</span>init_params[<span class="st">&quot;se_intercept&quot;</span>]    <span class="ot">&lt;-</span> <span class="fl">0.0</span></span>
+<span id="cb5-26"><a href="#cb5-26" tabindex="-1"></a>init_s2<span class="sc">$</span>init_params[<span class="st">&quot;se_linear_1&quot;</span>]     <span class="ot">&lt;-</span> <span class="fl">0.5</span></span>
+<span id="cb5-27"><a href="#cb5-27" tabindex="-1"></a>init_s2<span class="sc">$</span>init_params[<span class="st">&quot;se_residual_var&quot;</span>] <span class="ot">&lt;-</span> <span class="fl">0.5</span></span>
+<span id="cb5-28"><a href="#cb5-28" tabindex="-1"></a></span>
+<span id="cb5-29"><a href="#cb5-29" tabindex="-1"></a>result_stage2 <span class="ot">&lt;-</span> <span class="fu">estimate_model_rcpp</span>(</span>
+<span id="cb5-30"><a href="#cb5-30" tabindex="-1"></a>  <span class="at">model_system =</span> ms_stage2,</span>
+<span id="cb5-31"><a href="#cb5-31" tabindex="-1"></a>  <span class="at">data         =</span> dat,</span>
+<span id="cb5-32"><a href="#cb5-32" tabindex="-1"></a>  <span class="at">init_params  =</span> init_s2<span class="sc">$</span>init_params,</span>
+<span id="cb5-33"><a href="#cb5-33" tabindex="-1"></a>  <span class="at">control      =</span> ctrl,</span>
+<span id="cb5-34"><a href="#cb5-34" tabindex="-1"></a>  <span class="at">optimizer    =</span> <span class="st">&quot;nlminb&quot;</span>,</span>
+<span id="cb5-35"><a href="#cb5-35" tabindex="-1"></a>  <span class="at">parallel     =</span> <span class="cn">FALSE</span>,</span>
+<span id="cb5-36"><a href="#cb5-36" tabindex="-1"></a>  <span class="at">verbose      =</span> <span class="cn">FALSE</span></span>
+<span id="cb5-37"><a href="#cb5-37" tabindex="-1"></a>)</span>
+<span id="cb5-38"><a href="#cb5-38" tabindex="-1"></a>result_stage2<span class="sc">$</span>convergence</span>
+<span id="cb5-39"><a href="#cb5-39" tabindex="-1"></a><span class="co">#&gt; [1] 0</span></span></code></pre></div>
+</div>
+<div id="recovery" class="section level2">
+<h2>Recovery</h2>
+<div class="sourceCode" id="cb6"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb6-1"><a href="#cb6-1" tabindex="-1"></a>est <span class="ot">&lt;-</span> result_stage2<span class="sc">$</span>estimates</span>
+<span id="cb6-2"><a href="#cb6-2" tabindex="-1"></a>se  <span class="ot">&lt;-</span> result_stage2<span class="sc">$</span>std_errors</span>
+<span id="cb6-3"><a href="#cb6-3" tabindex="-1"></a>ps  <span class="ot">&lt;-</span> <span class="fu">c</span>(<span class="st">&quot;factor_var_1&quot;</span>, <span class="st">&quot;se_intercept&quot;</span>, <span class="st">&quot;se_linear_1&quot;</span>, <span class="st">&quot;se_residual_var&quot;</span>)</span>
+<span id="cb6-4"><a href="#cb6-4" tabindex="-1"></a></span>
+<span id="cb6-5"><a href="#cb6-5" tabindex="-1"></a>tab <span class="ot">&lt;-</span> <span class="fu">data.frame</span>(</span>
+<span id="cb6-6"><a href="#cb6-6" tabindex="-1"></a>  <span class="at">param =</span> ps,</span>
+<span id="cb6-7"><a href="#cb6-7" tabindex="-1"></a>  <span class="at">true  =</span> <span class="fu">c</span>(true_var_f1, true_alpha, true_beta, true_sigma_e2),</span>
+<span id="cb6-8"><a href="#cb6-8" tabindex="-1"></a>  <span class="at">est   =</span> <span class="fu">round</span>(<span class="fu">unname</span>(est[ps]), <span class="dv">4</span>),</span>
+<span id="cb6-9"><a href="#cb6-9" tabindex="-1"></a>  <span class="at">se    =</span> <span class="fu">round</span>(<span class="fu">unname</span>(se[ps]),  <span class="dv">4</span>)</span>
+<span id="cb6-10"><a href="#cb6-10" tabindex="-1"></a>)</span>
+<span id="cb6-11"><a href="#cb6-11" tabindex="-1"></a>tab<span class="sc">$</span>z <span class="ot">&lt;-</span> <span class="fu">round</span>((tab<span class="sc">$</span>est <span class="sc">-</span> tab<span class="sc">$</span>true) <span class="sc">/</span> tab<span class="sc">$</span>se, <span class="dv">2</span>)</span>
+<span id="cb6-12"><a href="#cb6-12" tabindex="-1"></a>knitr<span class="sc">::</span><span class="fu">kable</span>(tab, <span class="at">row.names =</span> <span class="cn">FALSE</span>)</span></code></pre></div>
+<table>
+<thead>
+<tr class="header">
+<th align="left">param</th>
+<th align="right">true</th>
+<th align="right">est</th>
+<th align="right">se</th>
+<th align="right">z</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td align="left">factor_var_1</td>
+<td align="right">1.0</td>
+<td align="right">0.9104</td>
+<td align="right">0.0325</td>
+<td align="right">-2.76</td>
+</tr>
+<tr class="even">
+<td align="left">se_intercept</td>
+<td align="right">0.4</td>
+<td align="right">0.4036</td>
+<td align="right">0.0217</td>
+<td align="right">0.17</td>
+</tr>
+<tr class="odd">
+<td align="left">se_linear_1</td>
+<td align="right">0.6</td>
+<td align="right">0.5880</td>
+<td align="right">0.0236</td>
+<td align="right">-0.51</td>
+</tr>
+<tr class="even">
+<td align="left">se_residual_var</td>
+<td align="right">0.5</td>
+<td align="right">0.5051</td>
+<td align="right">0.0261</td>
+<td align="right">0.20</td>
+</tr>
+</tbody>
+</table>
+<p><code>se_intercept</code> (the structural α) recovers essentially
+exactly, which is the whole point of the workflow. The slope β, residual
+variance σ²_ε, and input factor variance σ²_f₁ also recover within their
+standard errors.</p>
+</div>
+<div id="notes-on-generalisation" class="section level2">
+<h2>Notes on generalisation</h2>
+<ul>
+<li><strong>More than two periods.</strong> <code>period_prefixes</code>
+can have length 3, 4, or more. The wrapper builds a k-factor independent
+Stage 1 with all <code>k · (n_items - 1)</code> loadings and
+<code>k · n_items</code> sigmas tied across periods. For Stage 2 SE
+modelling, pick any two factors (e.g., periods <em>t-1</em> and
+<em>t</em>) and build a 2-factor SE model with
+<code>previous_stage</code>.</li>
+<li><strong>Ordered probit measures.</strong> Pass
+<code>model_type = &quot;oprobit&quot;</code> and <code>n_categories = K</code>.
+The wrapper ties the <code>K-1</code> cutpoints of each item across
+periods (in place of sigma).</li>
+<li><strong>Additional covariates.</strong> Pass
+<code>covariates = c(&quot;intercept&quot;, &quot;x1&quot;, ...)</code>. Covariate
+coefficients on items are estimated per-period in Stage 1 (not tied by
+this wrapper); the anchor-period values are carried into Stage 2.</li>
+</ul>
+</div>
+<div id="where-to-go-next" class="section level2">
+<h2>Where to go next</h2>
+<ul>
+<li><code>?define_factor_model</code>:
+<code>factor_structure = &quot;SE_quadratic&quot;</code> adds a quadratic term
+<code>γ·f_1²</code> to the structural equation (trap/threshold
+dynamics).</li>
+<li><code>?define_model_system</code>: the underlying
+<code>equality_constraints</code> argument, used by the wrapper.</li>
+<li><code>vignette(&quot;measurement_system&quot;, package = &quot;factorana&quot;)</code>:
+basics of measurement-system estimation.</li>
+<li><code>vignette(&quot;roy_model&quot;, package = &quot;factorana&quot;)</code>: a
+different structural setting (discrete sector choice plus continuous
+outcomes sharing a latent ability).</li>
+</ul>
+</div>
+
+
+
+<!-- code folding -->
+
+
+<!-- dynamically load mathjax for compatibility with self-contained -->
+<script>
+  (function () {
+    var script = document.createElement("script");
+    script.type = "text/javascript";
+    script.src  = "https://mathjax.rstudio.com/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML";
+    document.getElementsByTagName("head")[0].appendChild(script);
+  })();
+</script>
+
+</body>
+</html>
