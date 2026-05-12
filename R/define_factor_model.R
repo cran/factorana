@@ -226,6 +226,14 @@ define_factor_model <- function(n_factors,
     se_covariates = se_covariates,
     n_se_covariates = n_se_cov,
     n_se_covariate_param = n_se_covariate_param,
+    # User-fixed factor-distribution parameters set via fix_factor_param().
+    # Stored as a named numeric vector (names are factor-distribution
+    # parameter names, values are the fixed values). NULL when nothing
+    # is user-fixed. setup_parameter_constraints() and
+    # initialize_parameters() consume this to mark positions FIXED and
+    # to seed the C++ init values, mirroring fix_coefficient() at the
+    # measurement-component level.
+    fixed_params = NULL,
     params = rep(0.0, nfac_param)
   )
 
@@ -257,6 +265,12 @@ print.factor_model <- function(x, ...) {
   cat("Number of parameters in latent factor distribution:", x$nfac_param, "\n")
   if (x$n_types > 1L) {
     cat("Number of parameters in type probability model:", x$ntyp_param, "\n")
+  }
+  if (!is.null(x$fixed_params) && length(x$fixed_params) > 0L) {
+    cat("Fixed factor-distribution parameters:\n")
+    for (nm in names(x$fixed_params)) {
+      cat(sprintf("  %s = %g\n", nm, x$fixed_params[[nm]]))
+    }
   }
   invisible(x)
 }

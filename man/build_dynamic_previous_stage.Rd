@@ -15,7 +15,7 @@ build_dynamic_previous_stage(dyn, stage1_result, data, anchor_period = 1L)
 
 \item{data}{The same data frame passed to
 \code{\link{define_dynamic_measurement}} (needed to rebuild the
-dummy model system's components — components don't retain the
+dummy model system's components; components do not retain the
 data they were defined on).}
 
 \item{anchor_period}{Integer index into \code{dyn$period_prefixes}

@@ -1258,7 +1258,7 @@ test_that("Ordered probit model estimation with interaction factor terms recover
 # ==============================================================================
 
 test_that("Gradient accuracy for 3-factor linear model with full second order terms", {
-  # This test runs by default (moderate computational cost)
+  skip_on_cran()
   set.seed(321)
 
   # Generate data with 3 factors
@@ -1389,7 +1389,7 @@ test_that("Gradient accuracy for 3-factor linear model with full second order te
 # ==============================================================================
 
 test_that("Hessian accuracy for 3-factor linear model with full second order terms", {
-  # This test runs by default (moderate computational cost)
+  skip_on_cran()
   set.seed(322)
 
   # Generate data with 3 factors

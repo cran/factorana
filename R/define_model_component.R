@@ -279,7 +279,16 @@ define_model_component <- function(name,
   }
 
   # ---- 6. Evaluation subset conditioning ----
-  # Restrict data to rows where evaluation_indicator = TRUE/1
+  # Restrict data to rows where evaluation_indicator = TRUE/1.
+  # Panel data with wave- or cohort-specific item availability often has
+  # evaluation_indicator that is entirely zero for some (component, wave)
+  # combinations. In that case the component contributes nothing to the
+  # likelihood and we warn-and-skip rather than erroring: returning NULL
+  # so define_model_system() can drop it. Only the empty-input case
+  # (data already has zero rows BEFORE filtering) remains a hard error,
+  # since that is almost always a caller mistake.
+
+  if (nrow(data) == 0L) stop("Evaluation subset has zero rows")
 
   idx <- rep(TRUE, nrow(data))  # default: check all rows
   if (!is.null(evaluation_indicator)) {
@@ -291,13 +300,17 @@ define_model_component <- function(name,
     } else {
       stop("`evaluation_indicator` must be logical or 0/1 numeric.")
     }
+    if (sum(idx) == 0L) {
+      warning(sprintf(
+        "Component '%s' is skipped: evaluation_indicator '%s' has no TRUE/1 rows.",
+        name, evaluation_indicator),
+        call. = FALSE)
+      return(invisible(NULL))
+    }
   }
 
   data <- data[idx, , drop = FALSE]
   rownames(data) <- NULL
-
-
-  if (nrow(data) == 0L) stop("Evaluation subset has zero rows")
 
   idx <- rep(TRUE, nrow(data))
 

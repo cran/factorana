@@ -49,6 +49,11 @@ fix_coefficient <- function(component, covariate, value, choice = NULL) {
 
 
   # ---- 1. Validate component ----
+  # NULL pass-through: define_model_component() returns NULL with a warning
+  # when its evaluation_indicator has no TRUE/1 rows. Pipelines that chain
+  # fix_coefficient() onto every component should propagate the skip
+  # rather than crash.
+  if (is.null(component)) return(invisible(NULL))
   if (!inherits(component, "model_component")) {
     stop("`component` must be an object of class 'model_component'.")
   }

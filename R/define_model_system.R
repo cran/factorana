@@ -40,7 +40,32 @@ define_model_system <- function(components, factor, previous_stage = NULL, weigh
                                 equality_constraints = NULL, free_params = NULL) {
   # Validate the inputs:
 
-  if (!is.list(components) || !all(sapply(components, inherits, "model_component"))) {
+  if (!is.list(components)) {
+    stop("Input must be a list of model_component objects.")
+  }
+
+  # Drop NULL entries. define_model_component() returns NULL (with a warning)
+  # when its evaluation_indicator has no TRUE/1 rows; rather than forcing
+  # callers to filter manually, we filter here so panel-data pipelines with
+  # wave-specific item availability can pass list(mc1, mc2, mc3) without
+  # downstream branching when some components turn out empty.
+  n_before_filter <- length(components)
+  null_mask <- vapply(components, is.null, logical(1))
+  if (any(null_mask)) {
+    components <- components[!null_mask]
+  }
+
+  # Only error if the user passed AT LEAST ONE component and they ALL got
+  # filtered out (i.e., every component had an empty evaluation_indicator).
+  # An explicit `components = list()` is a valid Stage-2-only spec; later
+  # validations (previous_stage required, etc.) handle that case.
+  if (length(components) == 0L && n_before_filter > 0L && is.null(previous_stage)) {
+    stop("All components were skipped (e.g., empty evaluation_indicator) and ",
+         "no previous_stage was provided. Cannot construct a model_system.")
+  }
+
+  if (length(components) > 0L &&
+      !all(vapply(components, inherits, logical(1), "model_component"))) {
     stop("Input must be a list of model_component objects.")
   }
 

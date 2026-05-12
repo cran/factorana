@@ -25,24 +25,22 @@ test_that("only eval==1 and non-missing Y are used", {
 #creates a scenario where there are no rows for eval_indicator to be 1
 #so basically no rows to evaluate.
 
-test_that("zero rows after conditioning throws a clear error", {
+test_that("zero rows after conditioning warns and returns NULL", {
+  # Behavior change in factorana 1.3.1: an evaluation_indicator that
+  # selects no rows used to be a fatal error. Panel-data pipelines with
+  # wave/cohort-specific item availability now warn and return NULL so
+  # define_model_system() can drop the empty component.
   dat <- make_toy()
   fm  <- define_factor_model(1, 1)
-
-  # make eval_y1 all zeros -> no rows
   dat$eval_y1 <- 0L
 
-  expect_error(
-    define_model_component(
-      name = "Y1",
-      data = dat,
-      outcome = "Y",
-      factor = fm,
-      evaluation_indicator = "eval_y1",
-      covariates = "X1",
-      model_type = "linear",
-      intercept = FALSE
+  expect_warning(
+    mc_null <- define_model_component(
+      name = "Y1", data = dat, outcome = "Y", factor = fm,
+      evaluation_indicator = "eval_y1", covariates = "X1",
+      model_type = "linear", intercept = FALSE
     ),
-    regexp = "Evaluation subset has zero rows", fixed = TRUE
+    regexp = "Component 'Y1' is skipped"
   )
+  expect_null(mc_null)
 })

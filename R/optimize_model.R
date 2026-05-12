@@ -246,33 +246,21 @@ build_parameter_metadata <- function(model_system) {
     component_id <- c(component_id, 0)  # 0 = factor model
   }
 
-  # Add factor mean covariate parameters if specified
-  factor_covariates <- model_system$factor$factor_covariates
-  if (!is.null(factor_covariates) && length(factor_covariates) > 0) {
-    # Determine how many factors get mean covariates
-    if (factor_structure %in% c("SE_linear", "SE_quadratic")) {
-      n_factors_with_mean <- n_factors - 1L  # Only input factors
-    } else {
-      n_factors_with_mean <- n_factors
-    }
-    for (k in seq_len(n_factors_with_mean)) {
-      for (cov_name in factor_covariates) {
-        param_names <- c(param_names, sprintf("factor_mean_%d_%s", k, cov_name))
-        param_types <- c(param_types, "factor_mean")
-        component_id <- c(component_id, 0)  # 0 = factor model
-      }
-    }
-  }
-
-  # Add SE covariate parameters if specified (for SE_linear/SE_quadratic)
-  se_covariates <- model_system$factor$se_covariates
-  if (!is.null(se_covariates) && length(se_covariates) > 0) {
-    for (cov_name in se_covariates) {
-      param_names <- c(param_names, sprintf("se_cov_%s", cov_name))
-      param_types <- c(param_types, "se_covariate")
-      component_id <- c(component_id, 0)  # 0 = factor model
-    }
-  }
+  # Parameter-ordering invariant (must match C++ FactorModel constructor +
+  # SetFactorMeanCovariates / SetSECovariates / AddModel call sequence in
+  # rcpp_interface.cpp):
+  #
+  #   factor_var* -> se_* (intercept, linear, [quadratic], type intercepts,
+  #                  residual var) -> typeprob/type_loading -> factor_mean_*
+  #   -> se_cov_* -> component model params
+  #
+  # The C++ constructor adds typeprob/type_loading slots immediately after
+  # the SE block (see FactorModel::FactorModel, "type_param_start = nparam"
+  # comment). factor_mean_* and se_cov_* are appended LATER via
+  # SetFactorMeanCovariates / SetSECovariates. Putting type params after
+  # the covariate params on the R side desyncs every gradient / Hessian
+  # element involving covariate params or type params (regression bug
+  # observed in factorana <= 1.2.0 with n_types > 1 + se_covariates).
 
   # Add type model parameters if n_types > 1 and at least one component uses types
   # Type model: log(P(type=t)/P(type=1)) = typeprob_t_intercept + sum_k lambda_t_k * f_k
@@ -300,6 +288,34 @@ build_parameter_metadata <- function(model_system) {
         param_types <- c(param_types, "type_loading")
         component_id <- c(component_id, 0)  # 0 = factor model
       }
+    }
+  }
+
+  # Add factor mean covariate parameters if specified
+  factor_covariates <- model_system$factor$factor_covariates
+  if (!is.null(factor_covariates) && length(factor_covariates) > 0) {
+    # Determine how many factors get mean covariates
+    if (factor_structure %in% c("SE_linear", "SE_quadratic")) {
+      n_factors_with_mean <- n_factors - 1L  # Only input factors
+    } else {
+      n_factors_with_mean <- n_factors
+    }
+    for (k in seq_len(n_factors_with_mean)) {
+      for (cov_name in factor_covariates) {
+        param_names <- c(param_names, sprintf("factor_mean_%d_%s", k, cov_name))
+        param_types <- c(param_types, "factor_mean")
+        component_id <- c(component_id, 0)  # 0 = factor model
+      }
+    }
+  }
+
+  # Add SE covariate parameters if specified (for SE_linear/SE_quadratic)
+  se_covariates <- model_system$factor$se_covariates
+  if (!is.null(se_covariates) && length(se_covariates) > 0) {
+    for (cov_name in se_covariates) {
+      param_names <- c(param_names, sprintf("se_cov_%s", cov_name))
+      param_types <- c(param_types, "se_covariate")
+      component_id <- c(component_id, 0)  # 0 = factor model
     }
   }
 
@@ -561,9 +577,33 @@ setup_parameter_constraints <- function(model_system, init_params, param_metadat
   # Track cutpoint indices per component to identify incremental thresholds
   cutpoint_counter <- list()
 
+  # Collect stale-name indices (those past the end of param_metadata$names,
+  # or with NA `types`) so we can emit a single warning at the end rather
+  # than dying inside the per-param branch logic. Stale names typically
+  # originate from previous_stage anchors that carry parameter names not
+  # present in the current model (e.g., a previous_stage with extra
+  # components, or a Stage 2 that drops a component the anchor still
+  # references). Mirrors the warn-and-skip philosophy of
+  # define_model_component() in factorana >= 1.3.1.
+  stale_names <- character(0)
+
   for (i in seq_len(n_params)) {
     param_type <- param_metadata$types[i]
     comp_id <- param_metadata$component_id[i]
+
+    if (is.na(param_type)) {
+      nm <- if (i <= length(init_params)) names(init_params)[i] else NA_character_
+      stale_names <- c(stale_names, if (is.null(nm) || is.na(nm))
+                                       sprintf("<unnamed param at position %d>", i)
+                                     else nm)
+      # Mark stale positions FIXED so they never enter free_idx and the
+      # optimizer never tries to move them. Their value stays at whatever
+      # init_params carries (typically the prior anchor's estimate).
+      param_fixed[i] <- TRUE
+      lower_bounds[i] <- init_params[i]
+      upper_bounds[i] <- init_params[i]
+      next
+    }
 
     # Fix non-identified factor variances
     if (param_type == "factor_var") {
@@ -819,6 +859,75 @@ setup_parameter_constraints <- function(model_system, init_params, param_metadat
                           derived_idx, constraint[i], primary_idx, constraint[1]))
         }
       }
+    }
+  }
+
+  # One-shot warning for any stale parameter names encountered (typically
+  # previous_stage anchors that reference parameters not in the current
+  # model). Truncate to first 10 names for readability.
+  if (length(stale_names) > 0L) {
+    head_names <- head(stale_names, 10L)
+    tail_msg <- if (length(stale_names) > 10L)
+                  sprintf(" ... (%d total)", length(stale_names)) else ""
+    warning(sprintf(
+      "Skipping %d previous_stage / init_params name(s) not present in the current model: %s%s",
+      length(stale_names), paste(head_names, collapse = ", "), tail_msg),
+      call. = FALSE)
+  }
+
+  # Apply user-fixed factor-distribution parameters from fix_factor_param().
+  # Runs LAST (after previous_stage, auto-fix, and equality_constraints) so
+  # the user's explicit constraint always wins. Documented in
+  # ?fix_factor_param: a name listed in `free_params` of a previous_stage
+  # workflow is silently kept fixed, and any value in
+  # `previous_stage$estimates` for the same name is overridden.
+  if (!is.null(model_system$factor$fixed_params) &&
+      length(model_system$factor$fixed_params) > 0L) {
+    fp <- model_system$factor$fixed_params
+    fp_idx <- match(names(fp), param_metadata$names)
+    valid <- !is.na(fp_idx)
+    if (any(!valid)) {
+      stop("fix_factor_param() referenced parameter name(s) not present in ",
+           "the parameter vector for this model: ",
+           paste(names(fp)[!valid], collapse = ", "),
+           ". This typically means the model spec changed (e.g., n_types ",
+           "or se_covariates) after fix_factor_param() was called.")
+    }
+    # Conflict diagnostics with previous_stage / free_params.
+    if (!is.null(model_system$previous_stage_info)) {
+      psi <- model_system$previous_stage_info
+      if (!is.null(psi$free_param_names)) {
+        ovr_free <- intersect(names(fp), psi$free_param_names)
+        if (length(ovr_free) > 0L) {
+          warning(sprintf(
+            "fix_factor_param() overrides free_params for: %s. The parameter(s) stay fixed.",
+            paste(ovr_free, collapse = ", ")), call. = FALSE)
+        }
+      }
+      if (!is.null(psi$all_param_values)) {
+        prev_vals <- psi$all_param_values[names(fp)]
+        prev_vals <- prev_vals[!is.na(prev_vals)]
+        if (length(prev_vals) > 0L) {
+          for (nm in names(prev_vals)) {
+            if (abs(unname(prev_vals[nm]) - unname(fp[nm])) > 1e-10) {
+              warning(sprintf(
+                "fix_factor_param() value for '%s' (%g) differs from previous_stage value (%g); using fix_factor_param() value.",
+                nm, unname(fp[nm]), unname(prev_vals[nm])), call. = FALSE)
+            }
+          }
+        }
+      }
+    }
+    fp_idx <- fp_idx[valid]
+    fp_val <- unname(fp)[valid]
+    param_fixed[fp_idx] <- TRUE
+    lower_bounds[fp_idx] <- fp_val
+    upper_bounds[fp_idx] <- fp_val
+    if (verbose) {
+      message(sprintf("Fixed %d factor-distribution parameter(s) via fix_factor_param(): %s",
+                      length(fp_idx),
+                      paste(sprintf("%s=%g", names(fp)[valid], fp_val),
+                            collapse = ", ")))
     }
   }
 
@@ -1197,6 +1306,68 @@ estimate_model_rcpp <- function(model_system, data, init_params = NULL,
   } else {
     # User provided init_params (assumed to be full vector)
     full_init_params <- init_params
+  }
+
+  # Reconcile full_init_params length with the current model. previous_stage
+  # anchors / user-supplied init_params can carry parameter names that no
+  # longer exist in the current model (e.g., a component dropped in
+  # 1.3.1's warn-and-skip path, or the anchor was built optimistically).
+  # The C++ side requires init_params length == nparam; otherwise
+  # SetParameterConstraintsWithValues errors with "Fixed values size mismatch".
+  #
+  # Gating by LENGTH (not name set): the reconciliation only fires when the
+  # vector has a different number of slots than the current model expects.
+  # If lengths match we trust the caller's naming, because some legacy code
+  # paths (notably multinomial logit) use a different naming convention
+  # inside initialize_parameters than build_parameter_metadata() generates,
+  # but the positional order matches and downstream code works correctly.
+  # Forcing a rename in that case silently zeros out the mlogit parameters.
+  .canonical_names <- build_parameter_metadata(model_system)$names
+  if (!is.null(.canonical_names) &&
+      length(full_init_params) != length(.canonical_names)) {
+    .input_names <- names(full_init_params)
+    if (is.null(.input_names)) {
+      # No names available — can't reconcile by name; just error clearly.
+      stop(sprintf(
+        "init_params has length %d but the current model has %d parameters; ",
+        length(full_init_params), length(.canonical_names)),
+        "names are missing so reconciliation is impossible.")
+    }
+    .stale <- setdiff(.input_names, .canonical_names)
+    if (length(.stale) > 0L) {
+      .head <- head(.stale, 10L)
+      .tail_msg <- if (length(.stale) > 10L)
+                     sprintf(" ... (%d total)", length(.stale)) else ""
+      warning(sprintf(
+        "Dropping %d previous_stage / init_params name(s) not present in the current model: %s%s",
+        length(.stale), paste(.head, collapse = ", "), .tail_msg),
+        call. = FALSE)
+    }
+    .canonical_init <- setNames(rep(0.0, length(.canonical_names)),
+                                 .canonical_names)
+    .overlap <- intersect(.canonical_names, .input_names)
+    if (length(.overlap) > 0L) {
+      .canonical_init[.overlap] <- full_init_params[.overlap]
+    }
+    .missing <- setdiff(.canonical_names, .input_names)
+    if (length(.missing) > 0L && is.null(init_params)) {
+      .src <- init_result$init_params
+      .src_overlap <- intersect(.missing, names(.src))
+      if (length(.src_overlap) > 0L) {
+        .canonical_init[.src_overlap] <- .src[.src_overlap]
+      }
+    } else if (length(.missing) > 0L) {
+      .auto <- initialize_parameters(model_system, data, verbose = FALSE)
+      .src <- .auto$init_params
+      .src_overlap <- intersect(.missing, names(.src))
+      if (length(.src_overlap) > 0L) {
+        .canonical_init[.src_overlap] <- .src[.src_overlap]
+      }
+      if (is.null(factor_variance_fixed)) {
+        factor_variance_fixed <- .auto$factor_variance_fixed
+      }
+    }
+    full_init_params <- .canonical_init
   }
 
   # Initialize factor models on each worker

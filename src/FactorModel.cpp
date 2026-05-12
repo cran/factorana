@@ -372,20 +372,15 @@ void FactorModel::SetFactorMeanCovariates(const std::vector<std::vector<double>>
         n_factors_with_mean = nfac;
     }
 
-    // Compute parameter index for factor mean coefficients
-    // They come after variance parameters and any SE/correlation parameters
-    // The order is: factor_var_1..k, [se_params or corr_params], factor_mean_1_cov1, factor_mean_1_cov2, ...
-    if (factor_structure == FactorStructure::SE_LINEAR ||
-        factor_structure == FactorStructure::SE_QUADRATIC) {
-        // After input factor variances and SE params
-        factor_mean_param_start = n_input_factors + nse_param;
-    } else if (factor_structure == FactorStructure::CORRELATION && nfac == 2) {
-        // After factor variances and correlation
-        factor_mean_param_start = nfac + 1;
-    } else {
-        // After factor variances
-        factor_mean_param_start = nfac;
-    }
+    // Compute parameter index for factor mean coefficients.
+    // factor_mean_* params are APPENDED to the existing parameter vector at
+    // the current `nparam`, which already includes factor variances, SE
+    // params, and (when ntyp > 1) typeprob/type_loading params. Earlier
+    // versions of this method computed the start as n_input_factors +
+    // nse_param (or nfac for non-SE), which silently put factor_mean BEFORE
+    // typeprob in the index space and desynced the gradient/Hessian
+    // accumulators when types and factor_mean were combined.
+    factor_mean_param_start = nparam;
 
     // Store the pre-processed (demeaned) covariate data
     // Demeaning and variance checking is done in R before calling this

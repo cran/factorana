@@ -161,3 +161,127 @@ test_that("Hessian is correct with equality constraints", {
   expect_true(result$pass,
               info = sprintf("Hessian check with equality constraints failed, max error: %.2e", result$max_error))
 })
+
+
+# =============================================================================
+# Regression test for the parameter-name-to-index map in
+# initialize_factor_model_cpp (rcpp_interface.cpp). The map was historically
+# missing typeprob_*_intercept (it stored the wrong name `type_*_intercept`),
+# all type_*_loading_*, every factor_mean_<k>_<cov>, and every se_cov_<cov>.
+#
+# Beyond making equality constraints on those parameter types unrecognised,
+# the missing factor_mean and se_cov entries also shifted every subsequent
+# component-level idx down by the number of skipped slots, so equality
+# constraints on loadings/sigmas/thresholds were silently mapped to factor-
+# distribution slots whenever factor_covariates or se_covariates were used.
+#
+# This test exercises an SE_linear + se_covariates two-stage workflow with
+# the dynamic-measurement pattern (loadings and sigmas tied across waves
+# via equality_constraints). With the map bug, the wave-2 loading "tied to"
+# wave-1 loading would silently land on a factor-mean / se_cov / typeprob
+# slot at Stage 1, the constraint would bind a different parameter, and the
+# resulting estimate would differ from a no-cov rerun. With the map fixed,
+# the tie binds the correct measurement parameters.
+# =============================================================================
+test_that("equality_constraints + se_covariates does not corrupt component idx mapping", {
+  skip_on_cran()
+
+  set.seed(2027)
+  n <- 600
+
+  X <- rnorm(n, 0, 1)
+  X_dem <- X - mean(X)
+
+  f <- rnorm(n, 0, 1)
+  eps <- rnorm(n, 0, 0.5)
+  f2 <- 0.5 * f + 0.4 * X_dem + eps
+
+  item_load <- c(1.0, 0.9, 1.1)
+  item_sigma <- c(0.6, 0.65, 0.55)
+  gen <- function(f, i) item_load[i] * f + rnorm(length(f), 0, item_sigma[i])
+  dat <- data.frame(
+    intercept = 1, X = X, eval = 1L,
+    Y_t1_m1 = gen(f,  1), Y_t1_m2 = gen(f,  2), Y_t1_m3 = gen(f,  3),
+    Y_t2_m1 = gen(f2, 1), Y_t2_m2 = gen(f2, 2), Y_t2_m3 = gen(f2, 3)
+  )
+
+  fm <- define_factor_model(n_factors = 2, factor_structure = "SE_linear",
+                            se_covariates = c("X"))
+
+  mk <- function(name, outcome, norm_idx) {
+    norm <- c(0, 0); norm[norm_idx] <- if (grepl("_m1$", name)) 1 else NA_real_
+    mc <- define_model_component(
+      name = name, data = dat, outcome = outcome, factor = fm,
+      covariates = "intercept", model_type = "linear",
+      loading_normalization = norm,
+      evaluation_indicator = "eval"
+    )
+    # Fix wave-2 (outcome-factor) measurement intercepts to 0 so se_intercept
+    # is properly identified — otherwise se_intercept walks along a flat
+    # ridge with the wave-2 intercepts. Same trick as test-se-models.R:574.
+    if (norm_idx == 2L) mc <- fix_coefficient(mc, "intercept", 0)
+    mc
+  }
+  comps <- list(
+    mk("Y_t1_m1", "Y_t1_m1", 1),
+    mk("Y_t1_m2", "Y_t1_m2", 1),
+    mk("Y_t1_m3", "Y_t1_m3", 1),
+    mk("Y_t2_m1", "Y_t2_m1", 2),
+    mk("Y_t2_m2", "Y_t2_m2", 2),
+    mk("Y_t2_m3", "Y_t2_m3", 2)
+  )
+
+  # Tie wave-1 / wave-2 loadings and sigmas. With the map bug + se_covariates,
+  # the component-level lookup would point at wrong indices.
+  eq <- list(
+    c("Y_t1_m2_loading_1", "Y_t2_m2_loading_2"),
+    c("Y_t1_m3_loading_1", "Y_t2_m3_loading_2"),
+    c("Y_t1_m1_sigma",     "Y_t2_m1_sigma"),
+    c("Y_t1_m2_sigma",     "Y_t2_m2_sigma"),
+    c("Y_t1_m3_sigma",     "Y_t2_m3_sigma")
+  )
+
+  ms <- define_model_system(components = comps, factor = fm,
+                            equality_constraints = eq)
+
+  ctrl <- define_estimation_control(n_quad_points = 8, num_cores = 1)
+  result <- estimate_model_rcpp(ms, dat, control = ctrl,
+                                 optimizer = "nlminb", parallel = FALSE,
+                                 verbose = FALSE)
+  expect_equal(result$convergence, 0,
+               info = "SE_linear + se_covariates + equality_constraints must converge")
+
+  est <- result$estimates
+
+  # The equality constraints must bind exactly: tied params share their
+  # primary's value (no slack from a misaligned lookup).
+  expect_equal(unname(est["Y_t1_m2_loading_1"]),
+               unname(est["Y_t2_m2_loading_2"]), tolerance = 1e-10,
+               info = "loading equality (m2) should bind tied -> primary exactly")
+  expect_equal(unname(est["Y_t1_m3_loading_1"]),
+               unname(est["Y_t2_m3_loading_2"]), tolerance = 1e-10,
+               info = "loading equality (m3) should bind tied -> primary exactly")
+  expect_equal(unname(est["Y_t1_m1_sigma"]),
+               unname(est["Y_t2_m1_sigma"]),     tolerance = 1e-10,
+               info = "sigma equality (m1) should bind tied -> primary exactly")
+  expect_equal(unname(est["Y_t1_m2_sigma"]),
+               unname(est["Y_t2_m2_sigma"]),     tolerance = 1e-10,
+               info = "sigma equality (m2) should bind tied -> primary exactly")
+  expect_equal(unname(est["Y_t1_m3_sigma"]),
+               unname(est["Y_t2_m3_sigma"]),     tolerance = 1e-10,
+               info = "sigma equality (m3) should bind tied -> primary exactly")
+
+  # se_cov_X must recover its DGP value (within sampling noise + finite-n
+  # bias). The test guards that the se_cov_X slot holds the SE-covariate
+  # coefficient, not some shifted slot's value.
+  expect_lt(abs(unname(est["se_cov_X"]) - 0.4), 0.15)
+
+  # Wave-1 measurement loadings and sigmas should recover roughly to their
+  # DGP values; this catches gross slot-misalignment that would leave them
+  # pinned to factor-distribution slots.
+  expect_lt(abs(unname(est["Y_t1_m2_loading_1"]) - 0.9),  0.15)
+  expect_lt(abs(unname(est["Y_t1_m3_loading_1"]) - 1.1),  0.15)
+  expect_lt(abs(unname(est["Y_t1_m1_sigma"])     - 0.6),  0.15)
+  expect_lt(abs(unname(est["Y_t1_m2_sigma"])     - 0.65), 0.15)
+  expect_lt(abs(unname(est["Y_t1_m3_sigma"])     - 0.55), 0.15)
+})

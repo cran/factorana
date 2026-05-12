@@ -68,7 +68,7 @@ Why period-specific intercepts? Under the usual factor-model
 identification convention \code{E[f_k] = 0} for every factor \code{k},
 pooling measurement intercepts across periods biases them by
 \eqn{\lambda_m \cdot E[f_2]/2} when the period-mean drifts between
-waves — an artefact that propagates into an under-estimate of
+waves, an artefact that propagates into an under-estimate of
 \code{se_intercept} in Stage 2. Leaving the intercepts period-specific
 and carrying the wave-1 intercepts into Stage 2 (via
 \code{\link{build_dynamic_previous_stage}}) sidesteps the bias.

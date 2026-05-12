@@ -134,16 +134,31 @@ initialize_parameters <- function(model_system, data, factor_scores = NULL, verb
         param_names <- c(param_names, "se_residual_var")
       }
 
-      # Add SE covariate parameters if specified (for two-stage SE_linear/SE_quadratic)
-      se_covariates <- model_system$factor$se_covariates
-      if (!is.null(se_covariates) && length(se_covariates) > 0) {
-        for (cov_name in se_covariates) {
+      # Parameter-ordering invariant (see build_parameter_metadata() comment
+      # in optimize_model.R): type-model params (typeprob/type_loading) come
+      # immediately after the SE block, BEFORE factor_mean and SE covariate
+      # params. Putting covariate slots before the type slots desyncs every
+      # gradient/Hessian element involving covariate or type params (the C++
+      # FactorModel constructor places typeprob/type_loading at type_param_start
+      # = nparam, before SetSECovariates / SetFactorMeanCovariates extend
+      # nparam further).
+
+      # Add type model parameters when n_types > 1.
+      if (n_types > 1L) {
+        n_factors_se <- model_system$factor$n_factors
+        # Type probability intercepts: n_types - 1 of them
+        for (t in 2:n_types) {
           init_params <- c(init_params, 0.0)
-          param_names <- c(param_names, paste0("se_cov_", cov_name))
+          param_names <- c(param_names, paste0("typeprob_", t, "_intercept"))
         }
-        if (verbose) {
-          message(sprintf("SE covariates (two-stage): %d parameters", length(se_covariates)))
-          message(sprintf("  Covariates: %s", paste(se_covariates, collapse = ", ")))
+        # Type probability loadings on each factor: (n_types - 1) * n_factors.
+        # The loading on the OUTCOME factor (k = n_factors_se) is fixed to 0
+        # by setup_parameter_constraints; we still need a slot for it.
+        for (t in 2:n_types) {
+          for (k in seq_len(n_factors_se)) {
+            init_params <- c(init_params, 0.0)
+            param_names <- c(param_names, paste0("type_", t, "_loading_", k))
+          }
         }
       }
 
@@ -164,27 +179,16 @@ initialize_parameters <- function(model_system, data, factor_scores = NULL, verb
         }
       }
 
-      # Add type model parameters when n_types > 1.
-      # Order MUST mirror the no-previous_stage branch: typeprob/type_loading
-      # appear AFTER the SE / covariate / factor_mean params and BEFORE the
-      # measurement params from the previous stage. This block was previously
-      # omitted, causing setup_parameter_constraints to read garbage values for
-      # type_*_loading_* and either error or silently mis-fix params.
-      if (n_types > 1L) {
-        n_factors_se <- model_system$factor$n_factors
-        # Type probability intercepts: n_types - 1 of them
-        for (t in 2:n_types) {
+      # Add SE covariate parameters if specified (for two-stage SE_linear/SE_quadratic)
+      se_covariates <- model_system$factor$se_covariates
+      if (!is.null(se_covariates) && length(se_covariates) > 0) {
+        for (cov_name in se_covariates) {
           init_params <- c(init_params, 0.0)
-          param_names <- c(param_names, paste0("typeprob_", t, "_intercept"))
+          param_names <- c(param_names, paste0("se_cov_", cov_name))
         }
-        # Type probability loadings on each factor: (n_types - 1) * n_factors.
-        # The loading on the OUTCOME factor (k = n_factors_se) is fixed to 0
-        # by setup_parameter_constraints; we still need a slot for it.
-        for (t in 2:n_types) {
-          for (k in seq_len(n_factors_se)) {
-            init_params <- c(init_params, 0.0)
-            param_names <- c(param_names, paste0("type_", t, "_loading_", k))
-          }
+        if (verbose) {
+          message(sprintf("SE covariates (two-stage): %d parameters", length(se_covariates)))
+          message(sprintf("  Covariates: %s", paste(se_covariates, collapse = ", ")))
         }
       }
 
@@ -471,6 +475,42 @@ initialize_parameters <- function(model_system, data, factor_scores = NULL, verb
       param_names <- c(param_names, "factor_corr_1_2")
     }
 
+    # Parameter-ordering invariant — see build_parameter_metadata() for the
+    # full rationale. Type-model params (typeprob/type_loading) MUST appear
+    # immediately after the SE block, BEFORE factor_mean and SE covariate
+    # params, because the C++ FactorModel constructor places them there.
+
+    # Add type model parameters if n_types > 1 AND at least one component uses types
+    # Type model: log(P(type=t)/P(type=1)) = typeprob_t_intercept + sum_k lambda_t_k * f_k
+    # (n_types - 1) intercepts + (n_types - 1) * n_factors loadings (type 1 is reference)
+    any_uses_types <- any(sapply(model_system$components, function(c) isTRUE(c$use_types)))
+    # SE_linear / SE_quadratic with ntyp > 1 implies types at the structural level
+    # (via se_intercept_type_{t}), so the type probability model is needed even when
+    # no measurement component sets use_types = TRUE.
+    .fs_for_types <- model_system$factor$factor_structure
+    if (!is.null(.fs_for_types) && .fs_for_types %in% c("SE_linear", "SE_quadratic") &&
+        n_types > 1L) {
+      any_uses_types <- TRUE
+    }
+    if (n_types > 1L && any_uses_types) {
+      # Type probability intercepts (n_types - 1)
+      typeprob_intercepts <- rep(0.0, n_types - 1L)
+      typeprob_intercept_names <- paste0("typeprob_", 2:n_types, "_intercept")
+      init_params <- c(init_params, typeprob_intercepts)
+      param_names <- c(param_names, typeprob_intercept_names)
+
+      # Type probability loadings ((n_types - 1) * n_factors)
+      type_loadings <- rep(0.0, (n_types - 1L) * n_factors)
+      type_loading_names <- character(0)
+      for (t in 2:n_types) {
+        for (k in seq_len(n_factors)) {
+          type_loading_names <- c(type_loading_names, paste0("type_", t, "_loading_", k))
+        }
+      }
+      init_params <- c(init_params, type_loadings)
+      param_names <- c(param_names, type_loading_names)
+    }
+
     # Add factor mean covariate parameters if specified
     # These coefficients shift the factor mean: E[f_k | X] = X * gamma_k
     factor_covariates <- model_system$factor$factor_covariates
@@ -515,37 +555,6 @@ initialize_parameters <- function(model_system, data, factor_scores = NULL, verb
         message(sprintf("SE covariates: %d parameters", length(se_covariates)))
         message(sprintf("  Covariates: %s", paste(se_covariates, collapse = ", ")))
       }
-    }
-
-    # Add type model parameters if n_types > 1 AND at least one component uses types
-    # Type model: log(P(type=t)/P(type=1)) = typeprob_t_intercept + sum_k lambda_t_k * f_k
-    # (n_types - 1) intercepts + (n_types - 1) * n_factors loadings (type 1 is reference)
-    any_uses_types <- any(sapply(model_system$components, function(c) isTRUE(c$use_types)))
-    # SE_linear / SE_quadratic with ntyp > 1 implies types at the structural level
-    # (via se_intercept_type_{t}), so the type probability model is needed even when
-    # no measurement component sets use_types = TRUE.
-    .fs_for_types <- model_system$factor$factor_structure
-    if (!is.null(.fs_for_types) && .fs_for_types %in% c("SE_linear", "SE_quadratic") &&
-        n_types > 1L) {
-      any_uses_types <- TRUE
-    }
-    if (n_types > 1L && any_uses_types) {
-      # Type probability intercepts (n_types - 1)
-      typeprob_intercepts <- rep(0.0, n_types - 1L)
-      typeprob_intercept_names <- paste0("typeprob_", 2:n_types, "_intercept")
-      init_params <- c(init_params, typeprob_intercepts)
-      param_names <- c(param_names, typeprob_intercept_names)
-
-      # Type probability loadings ((n_types - 1) * n_factors)
-      type_loadings <- rep(0.0, (n_types - 1L) * n_factors)
-      type_loading_names <- character(0)
-      for (t in 2:n_types) {
-        for (k in seq_len(n_factors)) {
-          type_loading_names <- c(type_loading_names, paste0("type_", t, "_loading_", k))
-        }
-      }
-      init_params <- c(init_params, type_loadings)
-      param_names <- c(param_names, type_loading_names)
     }
 
     start_comp_idx <- 1
@@ -1253,6 +1262,21 @@ initialize_parameters <- function(model_system, data, factor_scores = NULL, verb
   names(init_params) <- param_names
 
   # Compute param_fixed using setup_parameter_constraints
+  # Apply user-fixed factor-distribution parameters from fix_factor_param()
+  # BEFORE setup_parameter_constraints. This ensures init_params carries the
+  # user-supplied value at the fixed position so the C++ side
+  # (SetParameterConstraintsWithValues) starts there. setup_parameter_constraints
+  # will then mark these positions as fixed independently; the values match.
+  if (!is.null(model_system$factor$fixed_params) &&
+      length(model_system$factor$fixed_params) > 0L) {
+    fp <- model_system$factor$fixed_params
+    fp_idx <- match(names(fp), param_names)
+    valid <- !is.na(fp_idx)
+    if (any(valid)) {
+      init_params[fp_idx[valid]] <- unname(fp)[valid]
+    }
+  }
+
   # This is needed for gradient/Hessian checking in tests
   param_metadata <- build_parameter_metadata(model_system)
   param_constraints <- setup_parameter_constraints(
